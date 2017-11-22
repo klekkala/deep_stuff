@@ -63,12 +63,12 @@ best_prec1 = 0
 def main():
     global args, best_prec1
     args = parser.parse_args()
-    print args
+    print(args)
     # create model
     print("=> creating model '{}'".format(args.arch))
     print("=> creating model '{}'".format(args.arch))
     if args.arch.startswith('mobilenet'):
-	model = mobilenet.Net()
+        model = mobilenet.Net()
         print(model)
     model = torch.nn.DataParallel(model).cuda()
     # optionally resume from a checkpoint
@@ -76,8 +76,6 @@ def main():
         if os.path.isfile(args.resume):
             print("=> loading checkpoint '{}'".format(args.resume))
             checkpoint = torch.load(args.resume)
-	    for a in checkpoint.keys():
-		print a
             args.start_epoch = checkpoint['epoch']
             best_prec1 = checkpoint['best_prec1']
             model.load_state_dict(checkpoint['state_dict'])
@@ -87,7 +85,6 @@ def main():
             print("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
-    print "hello"
     # Data loading code
     traindir = os.path.join(args.data, 'train')
     valdir = os.path.join(args.data, 'val')

@@ -1,0 +1,6 @@
+file1, file2, trans, rot
+../train/4/4281/photo/2900.jpg, ../train/4/4281/photo/2925.jpg, 13, 54
+../train/4/4281/photo/2925.jpg, ../train/4/4281/photo/2950.jpg, 12, 29
+../train/4/4281/photo/2950.jpg, ../train/4/4281/photo/2975.jpg, 12, 54
+../train/4/4281/photo/2975.jpg, ../train/4/4281/photo/3000.jpg, 12, 54
+../train/4/4281/photo/3000.jpg, ../train/4/4281/photo/3025.jpg, 16, 59

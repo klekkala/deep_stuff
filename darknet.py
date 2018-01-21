@@ -516,3 +516,22 @@ class Darknet(nn.Module):
             if block['type'] == 'convolutional':
                block['batch_normalize'] = '0' 
         save_cfg(blocks, out_cfgfile)
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) != 3:
+        print('try:')
+        print('python darknet.py tiny-yolo-voc.cfg tiny-yolo-voc.weights tiny-yolo-voc-nobn.cfg tiny-yolo-voc-nobn.weights')
+        print('')
+        exit()
+
+    in_cfgfile = sys.argv[1]
+    in_weightfile = sys.argv[2]
+    #out_cfgfile = sys.argv[3]
+    #out_weightfile = sys.argv[4]
+    model = Darknet(in_cfgfile)
+    #model.load_weights(in_weightfile)
+    print type(model)
+    #print('save %s' % out_cfgfile)
+    #print('save %s' % out_weightfile)
+    #model.save_shrink_model(out_cfgfile, out_weightfile)

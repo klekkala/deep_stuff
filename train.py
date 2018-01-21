@@ -17,9 +17,11 @@ import torch.utils.data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-import mobilenet
-import wideresnet
+import siamese
+import dataset
 import pdb
+import loss
+
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(models.__dict__[name]))
@@ -28,23 +30,27 @@ model_names = sorted(name for name in models.__dict__
 parser = argparse.ArgumentParser(description='PyTorch Places365 Training')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
+parser.add_argument('traincsv', metavar='FILE',
+                    help='path to csv file for training')
+parser.add_argument('valcsv', metavar='FILE',
+                    help='path to csv file for validation')
 parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=6, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=90, type=int, metavar='N',
+parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
+parser.add_argument('-b', '--batch-size', default=128, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
-parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
+parser.add_argument('--weight-decay', '--wd', default=1e-5, type=float,
                     metavar='W', help='weight decay (default: 1e-4)')
 parser.add_argument('--print-freq', '-p', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
@@ -56,7 +62,6 @@ parser.add_argument('--pretrained', dest='pretrained', action='store_false',
                     help='use pre-trained model')
 parser.add_argument('--num_classes',default=365, type=int, help='num of class in the model')
 parser.add_argument('--dataset',default='places365',help='which dataset to train')
-
 best_prec1 = 0
 
 
@@ -67,8 +72,8 @@ def main():
     # create model
     print("=> creating model '{}'".format(args.arch))
     print("=> creating model '{}'".format(args.arch))
-    if args.arch.startswith('mobilenet'):
-        model = mobilenet.Net()
+    if args.arch.startswith('siamese'):
+        model = siamese.SiameseNetwork()
         print(model)
     model = torch.nn.DataParallel(model).cuda()
     # optionally resume from a checkpoint
@@ -88,36 +93,45 @@ def main():
     # Data loading code
     traindir = os.path.join(args.data, 'train')
     valdir = os.path.join(args.data, 'val')
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    normalize = transforms.Normalize(mean=[0.451, 0.390, 0.348],
+                                     std=[0.357, 0.350, 0.347])
+
+
+    siamese_train = dataset.SiameseNetworkDataset(imageFolderDataset=args.data,
+                                        csvfile=args.traincsv,
+                                        transform = transforms.Compose([
+                                        transforms.RandomSizedCrop(224),
+                                        transforms.RandomHorizontalFlip(),
+                                        transforms.ToTensor(),
+                                        normalize,]))
 
     train_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(traindir, transforms.Compose([
-            transforms.RandomSizedCrop(224),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ])),
+        siamese_train,
         batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
 
+    siamese_val = dataset.SiameseNetworkDataset(imageFolderDataset=args.data,
+                                        csvfile=args.valcsv,
+                                        transform = transforms.Compose([
+                                        transforms.Scale(256),
+                                        transforms.CenterCrop(224),
+                                        transforms.ToTensor(),
+                                        normalize,]))
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
-            transforms.Scale(256),
-            transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            normalize,
-        ])),
-        batch_size=args.batch_size, shuffle=False,
+        siamese_val,
+        batch_size=args.batch_size, shuffle=True,
         num_workers=args.workers, pin_memory=True)
 
     # define loss function (criterion) and pptimizer
-    criterion = nn.CrossEntropyLoss().cuda()
+    criterion = loss.PLoss()
+
+    #optimizer = torch.optim.Adam(model.parameters(), args.lr,
+                                #momentum=args.momentum,
+                                #weight_decay=args.weight_decay)
 
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
-
     if args.evaluate:
         validate(val_loader, model, criterion)
         return
@@ -129,11 +143,11 @@ def main():
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        #prec1 = validate(val_loader, model, criterion)
 
         # remember best prec@1 and save checkpoint
-        is_best = prec1 > best_prec1
-        best_prec1 = max(prec1, best_prec1)
+        is_best = best_prec1
+        best_prec1 = max(best_prec1, best_prec1)
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': args.arch,
@@ -153,27 +167,49 @@ def train(train_loader, model, criterion, optimizer, epoch):
     model.train()
 
     end = time.time()
-    for i, (input, target) in enumerate(train_loader):
+    iteration_number = 0
+    counter = []
+    for i, data in enumerate(train_loader,0):
+        img0, img1, label = data
+        img0, img1, label = torch.autograd.Variable(img0).cuda(), torch.autograd.Variable(img1).cuda(), torch.autograd.Variable(label).cuda(async=True)
+        #total = model(img0, img1)
         # measure data loading time
         data_time.update(time.time() - end)
 
-        target = target.cuda(async=True)
-        input_var = torch.autograd.Variable(input)
-        target_var = torch.autograd.Variable(target)
+        #target = target.cuda(async=True)
+        #input_var = torch.autograd.Variable(input)
+        #target_var = torch.autograd.Variable(target)
         # compute output
-        output = model(input_var)
-        loss = criterion(output, target_var)
-
+        total = model(img0, img1)
+        #ploss = criterion(total, label)
+	#print ploss
+##############
+        optimizer.zero_grad()
+        ploss = criterion(total,label)
+	#print "ploss is", ploss
+        ploss.backward()
+        optimizer.step()
+        if i %10 == 0 :
+            #print("Epoch number {}\n Current loss {}\n".format(epoch,ploss.data[0]))
+            iteration_number +=10
+            counter.append(iteration_number)
+            losses.update(ploss.data[0])
+############3
         # measure accuracy and record loss
-        prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-        losses.update(loss.data[0], input.size(0))
-        top1.update(prec1[0], input.size(0))
-        top5.update(prec5[0], input.size(0))
+        #total = output1+output2
+	#print total
+	#print label
+	#prec1, prec5 = accuracy(total.data, label, topk=(1, 5))
+    	#ploss = ploss[0]
+	#print ploss
+	#losses.update(ploss.data)
+        #top1.update(prec1[0])
+        #top5.update(prec5[0])
 
         # compute gradient and do SGD step
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+        #optimizer.zero_grad()
+        #ploss.backward()
+        #optimizer.step()
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -183,11 +219,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
             print('Epoch: [{0}][{1}/{2}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Data {data_time.val:.3f} ({data_time.avg:.3f})\t'
-                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
-                  'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                  'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                  'Loss {loss.val:.4f} ({loss.avg:.4f})\t'.format(
                    epoch, i, len(train_loader), batch_time=batch_time,
-                   data_time=data_time, loss=losses, top1=top1, top5=top5))
+                   data_time=data_time, loss=losses))
 
 
 def validate(val_loader, model, criterion):
